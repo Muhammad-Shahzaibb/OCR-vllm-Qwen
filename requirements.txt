@@ -1,0 +1,23 @@
+# API
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12
+
+# Settings / models
+pydantic>=2.9.0
+pydantic-settings>=2.6.0
+
+# LLM client
+openai>=1.55.0
+tenacity>=9.0.0
+
+# PDF / images
+PyMuPDF>=1.24.0
+Pillow>=10.4.0
+
+# Schema validation
+jsonschema>=4.23.0
+
+# Streamlit UI
+streamlit>=1.40.0
+requests>=2.32.0

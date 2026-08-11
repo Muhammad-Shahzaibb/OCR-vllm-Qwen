@@ -1,0 +1,21 @@
+from __future__ import annotations
+
+
+class ExtractionError(Exception):
+    """Base class for all extraction-layer errors."""
+
+
+class InvalidPDFError(ExtractionError):
+    """Raised when the uploaded file is not a readable PDF."""
+
+
+class InvalidSchemaError(ExtractionError):
+    """Raised when the caller-supplied JSON schema is not a usable JSON Schema."""
+
+
+class PDFTooLargeError(ExtractionError):
+    """Raised when the PDF exceeds configured page limits."""
+
+
+class LLMCallError(ExtractionError):
+    """Raised when the VLM endpoint fails (after retries / fallback are exhausted)."""
