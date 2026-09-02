@@ -19,3 +19,7 @@ class PDFTooLargeError(ExtractionError):
 
 class LLMCallError(ExtractionError):
     """Raised when the VLM endpoint fails (after retries / fallback are exhausted)."""
+
+
+class InvalidInputError(ExtractionError):
+    """Raised when an AI-node request is missing input or uses an unsupported type."""

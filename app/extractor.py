@@ -13,7 +13,7 @@ from .llm_client import QwenVLClient
 from .merge import merge_extraction_results
 from .models import ExtractionResponse, ExtractionWarning
 from .pdf_processor import PageImage, batch_pages, render_pdf_to_images
-from .prompt_builder import SYSTEM_PROMPT, build_parallel_seed_context, build_user_content
+from .prompt_builder import SYSTEM_PROMPT, build_parallel_seed_context, build_text_extract_content, build_user_content
 from .validators import validate_against_schema
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,62 @@ class Extractor:
         _validate_schema_shape(json_schema)
 
         pages = render_pdf_to_images(pdf_bytes, self._settings)
+        return await self._run_on_pages(pages, json_schema, instructions, request_id)
+
+    async def extract_from_pages(
+        self,
+        pages: list[PageImage],
+        json_schema: dict[str, Any],
+        instructions: str,
+    ) -> ExtractionResponse:
+        """Same extract pipeline, starting from already-rendered page images."""
+        request_id = str(uuid.uuid4())
+        _validate_schema_shape(json_schema)
+        return await self._run_on_pages(pages, json_schema, instructions, request_id)
+
+    async def extract_from_text(
+        self,
+        source_text: str,
+        json_schema: dict[str, Any],
+        instructions: str,
+    ) -> ExtractionResponse:
+        """Same schema extract contract, text-only (uses the VL model as a text LLM)."""
+        request_id = str(uuid.uuid4())
+        _validate_schema_shape(json_schema)
+        warnings: list[ExtractionWarning] = []
+        content = build_text_extract_content(json_schema, instructions, source_text)
+        async with self._semaphore:
+            raw = await self._llm.extract_json(SYSTEM_PROMPT, content, json_schema, request_id)
+        parsed = _try_parse_json(raw)
+        if parsed is None:
+            warnings.append(
+                ExtractionWarning(
+                    code="JSON_PARSE_FAILED",
+                    message="Model output was not valid JSON. Treated as empty.",
+                )
+            )
+            parsed = _empty_for_schema(json_schema)
+        merged, schema_valid, repair_attempts = await self._validate_and_repair(
+            parsed, json_schema, request_id, warnings
+        )
+        return ExtractionResponse(
+            data=merged,
+            schema_valid=schema_valid,
+            pages_processed=0,
+            batches=1,
+            repair_attempts=repair_attempts,
+            warnings=warnings,
+            model=self._settings.llm_model,
+            request_id=request_id,
+        )
+
+    async def _run_on_pages(
+        self,
+        pages: list[PageImage],
+        json_schema: dict[str, Any],
+        instructions: str,
+        request_id: str,
+    ) -> ExtractionResponse:
         batches = batch_pages(pages, self._settings.effective_pages_per_batch)
         warnings: list[ExtractionWarning] = []
 

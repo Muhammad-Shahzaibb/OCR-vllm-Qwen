@@ -128,6 +128,22 @@ def _downscale_if_needed(img: Image.Image, max_side: int) -> Image.Image:
     return img.resize(new_size, Image.LANCZOS)
 
 
+def encode_image_bytes(image_bytes: bytes, settings: Settings) -> PageImage:
+    """Encode an uploaded raster image the same way PDF pages are encoded."""
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    except Exception as exc:
+        raise InvalidPDFError(f"Could not open file as an image: {exc}") from exc
+
+    img = _downscale_if_needed(img, settings.pdf_max_image_longest_side_px)
+    fmt = (settings.pdf_image_format or "JPEG").upper()
+    if fmt not in ("JPEG", "JPG", "PNG"):
+        fmt = "JPEG"
+    if fmt == "JPG":
+        fmt = "JPEG"
+    return _encode_image(1, img, fmt=fmt, jpeg_quality=settings.pdf_jpeg_quality)
+
+
 def batch_pages(pages: list[PageImage], pages_per_batch: int) -> list[list[PageImage]]:
     """Splits rendered pages into fixed-size batches, preserving page order."""
     if pages_per_batch < 1:

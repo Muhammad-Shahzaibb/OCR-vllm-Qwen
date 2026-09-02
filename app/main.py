@@ -6,9 +6,11 @@ import logging
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
+from .ai_node import AiNodeRunner
 from .config import get_settings
 from .exceptions import (
     ExtractionError,
+    InvalidInputError,
     InvalidPDFError,
     InvalidSchemaError,
     LLMCallError,
@@ -16,7 +18,8 @@ from .exceptions import (
 )
 from .extractor import Extractor
 from .llm_client import QwenVLClient
-from .models import ExtractionResponse
+from .models import AiNodeResponse, ExtractionResponse
+from .node_catalog import NODE_CATALOG
 
 settings = get_settings()
 
@@ -27,16 +30,17 @@ logging.basicConfig(
 logger = logging.getLogger("extraction_service")
 
 app = FastAPI(
-    title="Generic Document Extraction Layer",
+    title="AI Node — Document / Text / Image",
     description=(
-        "Input: a PDF (multi-page, English/Arabic) + a JSON schema + free-text field-location "
-        "instructions. Output: JSON matching that schema, extracted via a locally-hosted Qwen3-VL."
+        "n8n-style AI node: input_type (file / text / image) routes to an operation. "
+        "POST /extract is unchanged (PDF schema extract). POST /ai-node runs the full node."
     ),
-    version="1.0.0",
+    version="1.1.0",
 )
 
 _llm_client = QwenVLClient(settings)
 _extractor = Extractor(settings, _llm_client)
+_ai_node = AiNodeRunner(settings, _extractor, _llm_client)
 
 
 @app.get("/health")
@@ -85,6 +89,67 @@ async def extract(
         raise HTTPException(status_code=502, detail=f"Upstream VLM error: {exc}") from exc
     except ExtractionError as exc:
         logger.exception("extraction failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/ai-node/catalog")
+async def ai_node_catalog() -> dict:
+    return NODE_CATALOG
+
+
+@app.post("/ai-node", response_model=AiNodeResponse)
+async def run_ai_node(
+    input_type: str = Form(..., description="file | text | image"),
+    operation: str = Form(...),
+    json_schema: str = Form("", description="JSON Schema string for extract/parse"),
+    instructions: str = Form(""),
+    source_text: str = Form(""),
+    labels: str = Form("", description="Comma-separated classify labels"),
+    style: str = Form("", description="Rewrite style"),
+    file: UploadFile | None = File(None),
+) -> AiNodeResponse:
+    schema_dict: dict | None = None
+    schema_raw = (json_schema or "").strip()
+    if schema_raw:
+        try:
+            schema_dict = json.loads(schema_raw)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail=f"json_schema is not valid JSON: {exc}") from exc
+
+    file_bytes = await file.read() if file is not None else None
+    filename = file.filename if file is not None else None
+    if file_bytes:
+        max_bytes = settings.max_upload_size_mb * 1024 * 1024
+        if len(file_bytes) > max_bytes:
+            raise HTTPException(
+                status_code=413, detail=f"File exceeds {settings.max_upload_size_mb} MB limit."
+            )
+
+    try:
+        return await _ai_node.run(
+            input_type=input_type.strip().lower(),
+            operation=operation.strip().lower(),
+            file_bytes=file_bytes or None,
+            filename=filename,
+            source_text=source_text,
+            json_schema=schema_dict,
+            instructions=instructions,
+            labels=labels,
+            style=style,
+        )
+    except InvalidInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except InvalidPDFError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except PDFTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except InvalidSchemaError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LLMCallError as exc:
+        logger.exception("AI node failed calling VLM")
+        raise HTTPException(status_code=502, detail=f"Upstream VLM error: {exc}") from exc
+    except ExtractionError as exc:
+        logger.exception("AI node failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 

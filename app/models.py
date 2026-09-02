@@ -10,6 +10,21 @@ class ExtractionWarning(BaseModel):
     message: str
 
 
+class AiNodeResponse(BaseModel):
+    input_type: str
+    operation: str
+    output_kind: str = Field(..., description="'json' or 'text'")
+    data: Any | None = Field(None, description="Structured JSON when output_kind is json")
+    text: str | None = Field(None, description="Free-form text when output_kind is text")
+    schema_valid: bool | None = None
+    pages_processed: int = 0
+    batches: int = 0
+    repair_attempts: int = 0
+    warnings: list[ExtractionWarning] = Field(default_factory=list)
+    model: str
+    request_id: str
+
+
 class ExtractionResponse(BaseModel):
     data: Any = Field(
         ...,

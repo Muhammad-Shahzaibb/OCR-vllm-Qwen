@@ -88,6 +88,44 @@ def build_user_content(
     return content
 
 
+def build_text_extract_content(
+    json_schema: dict[str, Any],
+    instructions: str,
+    source_text: str,
+) -> list[dict[str, Any]]:
+    """Same extract contract as vision batches, but text-only (no page images)."""
+    text = (
+        "You are extracting structured data from the text below (no images).\n\n"
+        "### Target JSON Schema\n"
+        f"```json\n{json.dumps(json_schema, ensure_ascii=False, indent=2)}\n```\n\n"
+        "### Field-location instructions from the caller\n"
+        + (
+            instructions.strip()
+            or "(none provided — infer field locations from labels and context in the text.)"
+        )
+        + "\n\n### Source text\n"
+        + source_text
+    )
+    return [{"type": "text", "text": text}]
+
+
+def pages_to_multimodal_content(
+    intro: str,
+    pages: list[PageImage],
+) -> list[dict[str, Any]]:
+    content: list[dict[str, Any]] = [{"type": "text", "text": intro}]
+    for p in pages:
+        mime = getattr(p, "mime", None) or "image/png"
+        content.append({"type": "text", "text": f"--- Page {p.page_number} ---"})
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{p.b64_png}"},
+            }
+        )
+    return content
+
+
 def build_parallel_seed_context(seed_result: Any, json_schema: dict[str, Any]) -> Any:
     """Freeze compact context from the seed batch for all parallel workers.
 
