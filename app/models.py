@@ -21,6 +21,10 @@ class AiNodeResponse(BaseModel):
     batches: int = 0
     repair_attempts: int = 0
     warnings: list[ExtractionWarning] = Field(default_factory=list)
+    source_meta: dict[str, Any] | None = Field(
+        None,
+        description="Fetch/parse metadata for datasource operations",
+    )
     model: str
     request_id: str
 

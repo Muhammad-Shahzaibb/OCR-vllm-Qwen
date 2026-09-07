@@ -9,10 +9,13 @@ from fastapi.responses import JSONResponse
 from .ai_node import AiNodeRunner
 from .config import get_settings
 from .exceptions import (
+    DatasourceFetchError,
+    DatasourceParseError,
     ExtractionError,
     InvalidInputError,
     InvalidPDFError,
     InvalidSchemaError,
+    InvalidSpreadsheetError,
     LLMCallError,
     PDFTooLargeError,
 )
@@ -30,12 +33,12 @@ logging.basicConfig(
 logger = logging.getLogger("extraction_service")
 
 app = FastAPI(
-    title="AI Node — Document / Text / Image",
+    title="AI Node — Document / Text / Image / Datasource",
     description=(
-        "n8n-style AI node: input_type (file / text / image) routes to an operation. "
+        "n8n-style AI node: input_type routes to an operation. "
         "POST /extract is unchanged (PDF schema extract). POST /ai-node runs the full node."
     ),
-    version="1.1.0",
+    version="1.2.0",
 )
 
 _llm_client = QwenVLClient(settings)
@@ -80,6 +83,8 @@ async def extract(
         return await _extractor.extract(raw_bytes, schema_dict, instructions)
     except InvalidPDFError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except InvalidSpreadsheetError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except PDFTooLargeError as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
     except InvalidSchemaError as exc:
@@ -99,13 +104,17 @@ async def ai_node_catalog() -> dict:
 
 @app.post("/ai-node", response_model=AiNodeResponse)
 async def run_ai_node(
-    input_type: str = Form(..., description="file | text | image"),
+    input_type: str = Form(..., description="file | text | image | datasource"),
     operation: str = Form(...),
-    json_schema: str = Form("", description="JSON Schema string for extract/parse"),
+    json_schema: str = Form("", description="JSON Schema string for extract/parse/analyze"),
     instructions: str = Form(""),
     source_text: str = Form(""),
     labels: str = Form("", description="Comma-separated classify labels"),
     style: str = Form("", description="Rewrite style"),
+    datasource_url: str = Form("", description="HTTP(S) URL to fetch"),
+    datasource_method: str = Form("GET", description="GET | POST | PUT | PATCH"),
+    datasource_headers: str = Form("", description="JSON object of request headers"),
+    datasource_body: str = Form("", description="Optional request body for POST/PUT/PATCH"),
     file: UploadFile | None = File(None),
 ) -> AiNodeResponse:
     schema_dict: dict | None = None
@@ -115,6 +124,19 @@ async def run_ai_node(
             schema_dict = json.loads(schema_raw)
         except json.JSONDecodeError as exc:
             raise HTTPException(status_code=422, detail=f"json_schema is not valid JSON: {exc}") from exc
+
+    headers_dict: dict[str, str] = {}
+    headers_raw = (datasource_headers or "").strip()
+    if headers_raw:
+        try:
+            parsed_headers = json.loads(headers_raw)
+            if not isinstance(parsed_headers, dict):
+                raise ValueError("headers must be a JSON object")
+            headers_dict = {str(k): str(v) for k, v in parsed_headers.items()}
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422, detail=f"datasource_headers is not valid JSON: {exc}"
+            ) from exc
 
     file_bytes = await file.read() if file is not None else None
     filename = file.filename if file is not None else None
@@ -136,10 +158,20 @@ async def run_ai_node(
             instructions=instructions,
             labels=labels,
             style=style,
+            datasource_url=datasource_url,
+            datasource_method=datasource_method,
+            datasource_headers=headers_dict,
+            datasource_body=datasource_body,
         )
     except InvalidInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except DatasourceFetchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except DatasourceParseError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except InvalidPDFError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except InvalidSpreadsheetError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except PDFTooLargeError as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc

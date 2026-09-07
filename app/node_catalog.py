@@ -5,12 +5,12 @@ from __future__ import annotations
 NODE_CATALOG: dict = {
     "file": {
         "label": "File / attachment",
-        "hint": "PDF, images, or plain text files",
-        "accept": ["pdf", "png", "jpg", "jpeg", "webp", "tif", "tiff", "txt"],
+        "hint": "PDF, Excel (.xlsx), images, or plain text files",
+        "accept": ["pdf", "xlsx", "xlsm", "png", "jpg", "jpeg", "webp", "tif", "tiff", "txt"],
         "operations": {
             "extract": {
                 "label": "Extract (with AI)",
-                "description": "Structured JSON from the file using a schema (current extract).",
+                "description": "Structured JSON from the file using a schema (PDF, Excel PO/invoice/SO, images).",
                 "fields": ["json_schema", "instructions"],
             },
             "classify": {
@@ -64,8 +64,31 @@ NODE_CATALOG: dict = {
             },
         },
     },
+    "datasource": {
+        "label": "Datasource",
+        "hint": "HTTP API or URL — fetch data and analyze into structured JSON (KPIs, metrics, extracts)",
+        "accept": [],
+        "operations": {
+            "analyze": {
+                "label": "Analyze (with AI)",
+                "description": (
+                    "Fetch from URL, apply instructions, return structured JSON. "
+                    "JSON schema is optional — omit it to let instructions define the output shape."
+                ),
+                "fields": [
+                    "datasource_url",
+                    "datasource_method",
+                    "datasource_headers",
+                    "datasource_body",
+                    "instructions",
+                    "json_schema",
+                ],
+            },
+        },
+    },
 }
 
 DEFAULT_CLASSIFY_LABELS = (
-    "invoice, purchase_order, receipt, identity_document, contract, letter, other"
+    "invoice, purchase_order, sales_order, proforma_invoice, receipt, "
+    "identity_document, contract, letter, other"
 )

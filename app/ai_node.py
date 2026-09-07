@@ -6,6 +6,8 @@ import uuid
 from typing import Any
 
 from .config import Settings
+from .datasource import DatasourceService
+from .datasource.models import DatasourceRequest, HttpMethod
 from .exceptions import InvalidInputError
 from .extractor import Extractor
 from .llm_client import QwenVLClient
@@ -18,12 +20,14 @@ from .pdf_processor import (
     render_pdf_to_images,
 )
 from .prompt_builder import pages_to_multimodal_content
+from .spreadsheet_processor import xlsx_bytes_to_extract_text, xlsx_bytes_to_text
 
 logger = logging.getLogger(__name__)
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff"}
 TEXT_EXTS = {".txt"}
 PDF_EXTS = {".pdf"}
+XLSX_EXTS = {".xlsx", ".xlsm"}
 
 CLASSIFY_SYSTEM = (
     "You classify documents. Reply with ONLY compact JSON: "
@@ -50,6 +54,7 @@ class AiNodeRunner:
         self._settings = settings
         self._extractor = extractor
         self._llm = llm
+        self._datasource = DatasourceService(settings, extractor, llm)
 
     async def run(
         self,
@@ -63,6 +68,10 @@ class AiNodeRunner:
         instructions: str,
         labels: str,
         style: str,
+        datasource_url: str = "",
+        datasource_method: str = "GET",
+        datasource_headers: dict[str, str] | None = None,
+        datasource_body: str = "",
     ) -> AiNodeResponse:
         if input_type not in NODE_CATALOG:
             raise InvalidInputError(f"Unknown input_type: {input_type}")
@@ -78,6 +87,16 @@ class AiNodeRunner:
             )
         if input_type == "text":
             return await self._run_text(operation, source_text, json_schema, instructions, style)
+        if input_type == "datasource":
+            return await self._run_datasource(
+                operation,
+                datasource_url,
+                datasource_method,
+                datasource_headers or {},
+                datasource_body,
+                json_schema,
+                instructions,
+            )
         return await self._run_image(
             operation, file_bytes, filename, json_schema, instructions
         )
@@ -99,6 +118,11 @@ class AiNodeRunner:
                 page = encode_image_bytes(payload, self._settings)
                 result = await self._extractor.extract_from_pages(
                     [page], json_schema or {}, instructions
+                )
+            elif kind == "xlsx":
+                text = xlsx_bytes_to_extract_text(payload, filename)
+                result = await self._extractor.extract_from_text(
+                    text, json_schema or {}, instructions
                 )
             else:
                 result = await self._extractor.extract_from_text(
@@ -181,6 +205,61 @@ class AiNodeRunner:
             )
         return await self._ocr_pages("image", "ocr", [page])
 
+    async def _run_datasource(
+        self,
+        operation: str,
+        url: str,
+        method: str,
+        headers: dict[str, str],
+        body: str,
+        json_schema: dict[str, Any] | None,
+        instructions: str,
+    ) -> AiNodeResponse:
+        if operation != "analyze":
+            raise InvalidInputError(
+                f"Operation {operation!r} is not valid for datasource input."
+            )
+        if not (url or "").strip():
+            raise InvalidInputError("Datasource URL is required.")
+
+        raw_method = (method or "GET").upper()
+        if raw_method not in ("GET", "POST", "PUT", "PATCH"):
+            raise InvalidInputError(
+                f"Unsupported datasource HTTP method: {method}. Use GET, POST, PUT, or PATCH."
+            )
+        http_method: HttpMethod = raw_method  # type: ignore[assignment]
+
+        req = DatasourceRequest(
+            url=(url or "").strip(),
+            method=http_method,
+            headers=headers,
+            body=(body or "").strip() or None,
+            instructions=instructions,
+            json_schema=json_schema,
+        )
+        result = await self._datasource.analyze(req)
+        warnings = [
+            ExtractionWarning(code=w["code"], message=w["message"])
+            for w in result.warnings
+        ]
+        return AiNodeResponse(
+            input_type="datasource",
+            operation="analyze",
+            output_kind="json",
+            data=result.data,
+            schema_valid=result.schema_valid,
+            repair_attempts=result.repair_attempts,
+            warnings=warnings,
+            source_meta={
+                **result.parsed.fetch_meta,
+                "format": result.parsed.format,
+                "truncated": result.parsed.truncated,
+                "record_count": result.parsed.record_count,
+            },
+            model=result.model,
+            request_id=result.request_id,
+        )
+
     async def _classify(
         self, kind: str, payload: bytes, labels: str
     ) -> AiNodeResponse:
@@ -248,6 +327,9 @@ class AiNodeRunner:
     ) -> tuple[str | list[dict[str, Any]], int, int]:
         if kind == "text":
             return f"{intro}\n\n{payload.decode('utf-8', errors='replace')}", 0, 1
+        if kind == "xlsx":
+            text = xlsx_bytes_to_text(payload)
+            return f"{intro}\n\n{text}", 0, 1
         if kind == "image":
             page = encode_image_bytes(payload, self._settings)
             return pages_to_multimodal_content(intro, [page]), 1, 1
@@ -274,9 +356,11 @@ class AiNodeRunner:
             return "image", file_bytes
         if ext in TEXT_EXTS:
             return "text", file_bytes
+        if ext in XLSX_EXTS:
+            return "xlsx", file_bytes
         raise InvalidInputError(
             f"Unsupported file type {ext or '(unknown)'}. "
-            "Allowed: pdf, png, jpg, jpeg, webp, tiff, txt."
+            "Allowed: pdf, xlsx, xlsm, png, jpg, jpeg, webp, tiff, txt."
         )
 
 

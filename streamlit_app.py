@@ -39,6 +39,11 @@ DEFAULT_INSTRUCTIONS = (
     "line_items are the rows of the main table; ignore subtotal/tax/discount rows."
 )
 
+DEFAULT_KPI_INSTRUCTIONS = (
+    "Analyze this API data and return dashboard KPIs: total count, sum of amounts if present, "
+    "and any notable trends. Use only values from the source."
+)
+
 st.markdown(
     """
 <style>
@@ -98,6 +103,10 @@ st.session_state.setdefault("instructions_text", DEFAULT_INSTRUCTIONS)
 st.session_state.setdefault("source_text", "")
 st.session_state.setdefault("labels_text", DEFAULT_CLASSIFY_LABELS)
 st.session_state.setdefault("style_text", "clear and professional")
+st.session_state.setdefault("datasource_url", "https://jsonplaceholder.typicode.com/users")
+st.session_state.setdefault("datasource_method", "GET")
+st.session_state.setdefault("datasource_headers", '{"Accept": "application/json"}')
+st.session_state.setdefault("datasource_body", "")
 
 with st.sidebar:
     st.header("Connection")
@@ -113,6 +122,10 @@ with st.sidebar:
     if st.button("Load example PO schema"):
         st.session_state["schema_text"] = json.dumps(DEFAULT_SCHEMA, indent=2, ensure_ascii=False)
         st.session_state["instructions_text"] = DEFAULT_INSTRUCTIONS
+    if st.button("Load example KPI datasource"):
+        st.session_state["instructions_text"] = DEFAULT_KPI_INSTRUCTIONS
+        st.session_state["datasource_url"] = "https://jsonplaceholder.typicode.com/users"
+        st.session_state["schema_text"] = ""
 
 col_node, col_out = st.columns([1.05, 1], gap="large")
 
@@ -156,12 +169,33 @@ with col_node:
             key=f"upload_{input_type}_{operation}",
         )
 
+    if "datasource_url" in fields:
+        st.markdown('<p class="prop-label">URL</p>', unsafe_allow_html=True)
+        st.text_input("URL", key="datasource_url", placeholder="https://api.example.com/metrics")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.selectbox("Method", ["GET", "POST", "PUT", "PATCH"], key="datasource_method")
+        with c2:
+            st.caption("Headers as JSON object")
+        st.text_area(
+            "Headers (JSON)",
+            key="datasource_headers",
+            height=80,
+            placeholder='{"Authorization": "Bearer ..."}',
+        )
+        if st.session_state.get("datasource_method", "GET") != "GET":
+            st.text_area("Request body", key="datasource_body", height=100)
+
     if "source_text" in fields:
         st.markdown('<p class="prop-label">Text</p>', unsafe_allow_html=True)
         st.text_area("Source text", key="source_text", height=180, label_visibility="collapsed")
 
     if "json_schema" in fields:
-        st.markdown('<p class="prop-label">JSON schema</p>', unsafe_allow_html=True)
+        if input_type == "datasource":
+            st.markdown('<p class="prop-label">JSON schema (optional)</p>', unsafe_allow_html=True)
+            st.caption("Leave empty — output shape comes from your instructions.")
+        else:
+            st.markdown('<p class="prop-label">JSON schema</p>', unsafe_allow_html=True)
         st.text_area("JSON schema", key="schema_text", height=220, label_visibility="collapsed")
 
     if "instructions" in fields:
@@ -181,6 +215,10 @@ with col_node:
     disabled = needs_file and uploaded is None
     if input_type == "text" and not (st.session_state.get("source_text") or "").strip():
         disabled = True
+    if input_type == "datasource":
+        has_url = bool((st.session_state.get("datasource_url") or "").strip())
+        has_instructions = bool((st.session_state.get("instructions_text") or "").strip())
+        disabled = not has_url or not has_instructions
     execute = st.button("Execute node", type="primary", disabled=disabled, use_container_width=True)
 
 with col_out:
@@ -197,13 +235,19 @@ with col_out:
         "labels": st.session_state.get("labels_text") or "",
         "style": st.session_state.get("style_text") or "",
     }
-    if "json_schema" in fields:
+    if "json_schema" in fields and (st.session_state.get("schema_text") or "").strip():
         try:
             json.loads(st.session_state["schema_text"])
         except json.JSONDecodeError as exc:
             st.error(f"JSON schema is not valid JSON: {exc}")
             st.stop()
         data["json_schema"] = st.session_state["schema_text"]
+
+    if input_type == "datasource":
+        data["datasource_url"] = st.session_state.get("datasource_url") or ""
+        data["datasource_method"] = st.session_state.get("datasource_method") or "GET"
+        data["datasource_headers"] = st.session_state.get("datasource_headers") or ""
+        data["datasource_body"] = st.session_state.get("datasource_body") or ""
 
     files = None
     if uploaded is not None:
@@ -229,8 +273,15 @@ with col_out:
     result = response.json()
     m1, m2, m3 = st.columns(3)
     m1.metric("Operation", f"{result['input_type']} / {result['operation']}")
-    m2.metric("Pages", result.get("pages_processed") or 0)
+    if result.get("source_meta"):
+        m2.metric("Source", result["source_meta"].get("detected_format", "n/a"))
+    else:
+        m2.metric("Pages", result.get("pages_processed") or 0)
     m3.metric("Kind", result.get("output_kind"))
+
+    if result.get("source_meta"):
+        with st.expander("Datasource fetch / parse metadata"):
+            st.json(result["source_meta"])
 
     if result.get("schema_valid") is True:
         st.success("Schema valid")

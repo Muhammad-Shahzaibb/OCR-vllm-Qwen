@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 60
     log_level: str = "INFO"
 
+    # --- datasource (API / URL tool) ---
+    datasource_request_timeout_s: float = 30.0
+    datasource_max_response_bytes: int = 5 * 1024 * 1024  # 5 MB
+    datasource_max_body_chars: int = 80_000
+    datasource_allow_private_urls: bool = False
+
     @property
     def effective_pages_per_batch(self) -> int:
         """Never send more images than the VLM multimodal limit."""
