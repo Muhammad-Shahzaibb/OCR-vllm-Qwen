@@ -6,12 +6,10 @@ import uuid
 from typing import Any
 
 from .config import Settings
-from .datasource import DatasourceService
-from .datasource.models import DatasourceRequest, HttpMethod
 from .exceptions import InvalidInputError
 from .extractor import Extractor
 from .llm_client import QwenVLClient
-from .models import AiNodeResponse, ExtractionResponse, ExtractionWarning
+from .models import AiNodeResponse, ClassifyResultData, ExtractionResponse, ExtractionWarning
 from .node_catalog import DEFAULT_CLASSIFY_LABELS, NODE_CATALOG
 from .pdf_processor import (
     PageImage,
@@ -54,7 +52,6 @@ class AiNodeRunner:
         self._settings = settings
         self._extractor = extractor
         self._llm = llm
-        self._datasource = DatasourceService(settings, extractor, llm)
 
     async def run(
         self,
@@ -68,17 +65,18 @@ class AiNodeRunner:
         instructions: str,
         labels: str,
         style: str,
-        datasource_url: str = "",
-        datasource_method: str = "GET",
-        datasource_headers: dict[str, str] | None = None,
-        datasource_body: str = "",
     ) -> AiNodeResponse:
         if input_type not in NODE_CATALOG:
             raise InvalidInputError(f"Unknown input_type: {input_type}")
-        ops = NODE_CATALOG[input_type]["operations"]
+        ops = NODE_CATALOG[input_type].operations
         if operation not in ops:
             raise InvalidInputError(
                 f"Operation {operation!r} is not valid for input_type {input_type!r}."
+            )
+
+        if operation in ("extract", "parse") and not json_schema:
+            raise InvalidInputError(
+                f"json_schema is required for {input_type}/{operation}."
             )
 
         if input_type == "file":
@@ -87,16 +85,6 @@ class AiNodeRunner:
             )
         if input_type == "text":
             return await self._run_text(operation, source_text, json_schema, instructions, style)
-        if input_type == "datasource":
-            return await self._run_datasource(
-                operation,
-                datasource_url,
-                datasource_method,
-                datasource_headers or {},
-                datasource_body,
-                json_schema,
-                instructions,
-            )
         return await self._run_image(
             operation, file_bytes, filename, json_schema, instructions
         )
@@ -205,61 +193,6 @@ class AiNodeRunner:
             )
         return await self._ocr_pages("image", "ocr", [page])
 
-    async def _run_datasource(
-        self,
-        operation: str,
-        url: str,
-        method: str,
-        headers: dict[str, str],
-        body: str,
-        json_schema: dict[str, Any] | None,
-        instructions: str,
-    ) -> AiNodeResponse:
-        if operation != "analyze":
-            raise InvalidInputError(
-                f"Operation {operation!r} is not valid for datasource input."
-            )
-        if not (url or "").strip():
-            raise InvalidInputError("Datasource URL is required.")
-
-        raw_method = (method or "GET").upper()
-        if raw_method not in ("GET", "POST", "PUT", "PATCH"):
-            raise InvalidInputError(
-                f"Unsupported datasource HTTP method: {method}. Use GET, POST, PUT, or PATCH."
-            )
-        http_method: HttpMethod = raw_method  # type: ignore[assignment]
-
-        req = DatasourceRequest(
-            url=(url or "").strip(),
-            method=http_method,
-            headers=headers,
-            body=(body or "").strip() or None,
-            instructions=instructions,
-            json_schema=json_schema,
-        )
-        result = await self._datasource.analyze(req)
-        warnings = [
-            ExtractionWarning(code=w["code"], message=w["message"])
-            for w in result.warnings
-        ]
-        return AiNodeResponse(
-            input_type="datasource",
-            operation="analyze",
-            output_kind="json",
-            data=result.data,
-            schema_valid=result.schema_valid,
-            repair_attempts=result.repair_attempts,
-            warnings=warnings,
-            source_meta={
-                **result.parsed.fetch_meta,
-                "format": result.parsed.format,
-                "truncated": result.parsed.truncated,
-                "record_count": result.parsed.record_count,
-            },
-            model=result.model,
-            request_id=result.request_id,
-        )
-
     async def _classify(
         self, kind: str, payload: bytes, labels: str
     ) -> AiNodeResponse:
@@ -271,12 +204,14 @@ class AiNodeRunner:
         )
         content, pages_n, batches = await self._payload_to_content(kind, payload, intro)
         raw = await self._llm.complete(CLASSIFY_SYSTEM, content, request_id)
-        data = _parse_json_loose(raw) or {"label": "other", "confidence": 0, "reason": raw}
+        parsed = _parse_json_loose(raw)
+        classify = _normalize_classify(parsed, raw)
         return AiNodeResponse(
             input_type="file",
             operation="classify",
             output_kind="json",
-            data=data,
+            data=classify.model_dump(),
+            classify=classify,
             pages_processed=pages_n,
             batches=batches,
             model=self._settings.llm_model,
@@ -372,11 +307,14 @@ def _ext(filename: str | None) -> str:
 
 
 def _from_extract(input_type: str, operation: str, result: ExtractionResponse) -> AiNodeResponse:
+    data = result.data
+    if not isinstance(data, (dict, list)):
+        data = {"value": data}
     return AiNodeResponse(
-        input_type=input_type,
+        input_type=input_type,  # type: ignore[arg-type]
         operation=operation,
         output_kind="json",
-        data=result.data,
+        data=data,
         schema_valid=result.schema_valid,
         pages_processed=result.pages_processed,
         batches=result.batches,
@@ -385,6 +323,19 @@ def _from_extract(input_type: str, operation: str, result: ExtractionResponse) -
         model=result.model,
         request_id=result.request_id,
     )
+
+
+def _normalize_classify(parsed: Any, raw: str) -> ClassifyResultData:
+    if isinstance(parsed, dict):
+        label = str(parsed.get("label") or "other")
+        try:
+            confidence = float(parsed.get("confidence", 0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        confidence = max(0.0, min(1.0, confidence))
+        reason = str(parsed.get("reason") or "")
+        return ClassifyResultData(label=label, confidence=confidence, reason=reason)
+    return ClassifyResultData(label="other", confidence=0.0, reason=(raw or "")[:500])
 
 
 def _parse_json_loose(raw: str) -> Any | None:

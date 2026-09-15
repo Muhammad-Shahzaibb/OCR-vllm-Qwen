@@ -27,11 +27,3 @@ class InvalidInputError(ExtractionError):
 
 class InvalidSpreadsheetError(ExtractionError):
     """Raised when the uploaded file is not a readable Excel workbook."""
-
-
-class DatasourceFetchError(ExtractionError):
-    """Raised when a datasource URL cannot be fetched."""
-
-
-class DatasourceParseError(ExtractionError):
-    """Raised when a fetched datasource payload cannot be parsed."""

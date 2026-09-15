@@ -5,9 +5,12 @@ import json
 import requests
 import streamlit as st
 
+from app.config import get_settings
 from app.node_catalog import DEFAULT_CLASSIFY_LABELS, NODE_CATALOG
 
 st.set_page_config(page_title="AI Node", page_icon="⬡", layout="wide")
+
+DEFAULT_API_KEY = get_settings().ai_node_api_key or ""
 
 DEFAULT_SCHEMA = {
     "type": "object",
@@ -37,11 +40,6 @@ DEFAULT_INSTRUCTIONS = (
     "vendor_name is the company name in the letterhead, top-left. "
     "total_amount is the 'Grand Total' row at the bottom of the line-items table. "
     "line_items are the rows of the main table; ignore subtotal/tax/discount rows."
-)
-
-DEFAULT_KPI_INSTRUCTIONS = (
-    "Analyze this API data and return dashboard KPIs: total count, sum of amounts if present, "
-    "and any notable trends. Use only values from the source."
 )
 
 st.markdown(
@@ -103,14 +101,16 @@ st.session_state.setdefault("instructions_text", DEFAULT_INSTRUCTIONS)
 st.session_state.setdefault("source_text", "")
 st.session_state.setdefault("labels_text", DEFAULT_CLASSIFY_LABELS)
 st.session_state.setdefault("style_text", "clear and professional")
-st.session_state.setdefault("datasource_url", "https://jsonplaceholder.typicode.com/users")
-st.session_state.setdefault("datasource_method", "GET")
-st.session_state.setdefault("datasource_headers", '{"Accept": "application/json"}')
-st.session_state.setdefault("datasource_body", "")
 
 with st.sidebar:
     st.header("Connection")
     api_base_url = st.text_input("API base URL", value="http://localhost:8000").rstrip("/")
+    api_key = st.text_input(
+        "AI Node API key",
+        value=DEFAULT_API_KEY,
+        type="password",
+        help="Must match AI_NODE_API_KEY on the server. Sent as X-API-Key.",
+    )
     if st.button("Check health"):
         try:
             resp = requests.get(f"{api_base_url}/health", timeout=10)
@@ -122,10 +122,6 @@ with st.sidebar:
     if st.button("Load example PO schema"):
         st.session_state["schema_text"] = json.dumps(DEFAULT_SCHEMA, indent=2, ensure_ascii=False)
         st.session_state["instructions_text"] = DEFAULT_INSTRUCTIONS
-    if st.button("Load example KPI datasource"):
-        st.session_state["instructions_text"] = DEFAULT_KPI_INSTRUCTIONS
-        st.session_state["datasource_url"] = "https://jsonplaceholder.typicode.com/users"
-        st.session_state["schema_text"] = ""
 
 col_node, col_out = st.columns([1.05, 1], gap="large")
 
@@ -142,60 +138,40 @@ with col_node:
     input_type = st.selectbox(
         "Input type",
         input_keys,
-        format_func=lambda k: NODE_CATALOG[k]["label"],
+        format_func=lambda k: NODE_CATALOG[k].label,
         help="Like n8n Resource: changing this swaps the operation list and fields.",
     )
     spec = NODE_CATALOG[input_type]
-    st.caption(spec["hint"])
+    st.caption(spec.hint)
 
-    op_keys = list(spec["operations"].keys())
+    op_keys = list(spec.operations.keys())
     operation = st.selectbox(
         "Operation",
         op_keys,
-        format_func=lambda k: spec["operations"][k]["label"],
+        format_func=lambda k: spec.operations[k].label,
         key=f"op_{input_type}",
     )
-    op = spec["operations"][operation]
-    st.info(op["description"])
-    fields = set(op["fields"])
+    op = spec.operations[operation]
+    st.info(op.description)
+    st.caption(f"Output: **{op.output.kind}** — {op.output.description}")
+    fields = set(op.fields)
 
     uploaded = None
     if input_type in ("file", "image"):
         st.markdown('<p class="prop-label">Attachment</p>', unsafe_allow_html=True)
         uploaded = st.file_uploader(
             "File",
-            type=spec["accept"],
+            type=spec.accept,
             label_visibility="collapsed",
             key=f"upload_{input_type}_{operation}",
         )
-
-    if "datasource_url" in fields:
-        st.markdown('<p class="prop-label">URL</p>', unsafe_allow_html=True)
-        st.text_input("URL", key="datasource_url", placeholder="https://api.example.com/metrics")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.selectbox("Method", ["GET", "POST", "PUT", "PATCH"], key="datasource_method")
-        with c2:
-            st.caption("Headers as JSON object")
-        st.text_area(
-            "Headers (JSON)",
-            key="datasource_headers",
-            height=80,
-            placeholder='{"Authorization": "Bearer ..."}',
-        )
-        if st.session_state.get("datasource_method", "GET") != "GET":
-            st.text_area("Request body", key="datasource_body", height=100)
 
     if "source_text" in fields:
         st.markdown('<p class="prop-label">Text</p>', unsafe_allow_html=True)
         st.text_area("Source text", key="source_text", height=180, label_visibility="collapsed")
 
     if "json_schema" in fields:
-        if input_type == "datasource":
-            st.markdown('<p class="prop-label">JSON schema (optional)</p>', unsafe_allow_html=True)
-            st.caption("Leave empty — output shape comes from your instructions.")
-        else:
-            st.markdown('<p class="prop-label">JSON schema</p>', unsafe_allow_html=True)
+        st.markdown('<p class="prop-label">JSON schema</p>', unsafe_allow_html=True)
         st.text_area("JSON schema", key="schema_text", height=220, label_visibility="collapsed")
 
     if "instructions" in fields:
@@ -215,16 +191,14 @@ with col_node:
     disabled = needs_file and uploaded is None
     if input_type == "text" and not (st.session_state.get("source_text") or "").strip():
         disabled = True
-    if input_type == "datasource":
-        has_url = bool((st.session_state.get("datasource_url") or "").strip())
-        has_instructions = bool((st.session_state.get("instructions_text") or "").strip())
-        disabled = not has_url or not has_instructions
+    if not (api_key or "").strip():
+        disabled = True
     execute = st.button("Execute node", type="primary", disabled=disabled, use_container_width=True)
 
 with col_out:
     st.subheader("Output")
     if not execute:
-        st.caption("Configure properties on the left, then Execute.")
+        st.caption("Configure properties on the left (including API key), then Execute.")
         st.stop()
 
     data: dict[str, str] = {
@@ -235,7 +209,7 @@ with col_out:
         "labels": st.session_state.get("labels_text") or "",
         "style": st.session_state.get("style_text") or "",
     }
-    if "json_schema" in fields and (st.session_state.get("schema_text") or "").strip():
+    if "json_schema" in fields:
         try:
             json.loads(st.session_state["schema_text"])
         except json.JSONDecodeError as exc:
@@ -243,15 +217,11 @@ with col_out:
             st.stop()
         data["json_schema"] = st.session_state["schema_text"]
 
-    if input_type == "datasource":
-        data["datasource_url"] = st.session_state.get("datasource_url") or ""
-        data["datasource_method"] = st.session_state.get("datasource_method") or "GET"
-        data["datasource_headers"] = st.session_state.get("datasource_headers") or ""
-        data["datasource_body"] = st.session_state.get("datasource_body") or ""
-
     files = None
     if uploaded is not None:
         files = {"file": (uploaded.name, uploaded.getvalue(), uploaded.type or "application/octet-stream")}
+
+    headers = {"X-API-Key": api_key.strip()}
 
     with st.spinner("Running AI node… vision calls can take a while."):
         try:
@@ -259,6 +229,7 @@ with col_out:
                 f"{api_base_url}/ai-node",
                 data=data,
                 files=files,
+                headers=headers,
                 timeout=600,
             )
         except requests.RequestException as exc:
@@ -273,15 +244,8 @@ with col_out:
     result = response.json()
     m1, m2, m3 = st.columns(3)
     m1.metric("Operation", f"{result['input_type']} / {result['operation']}")
-    if result.get("source_meta"):
-        m2.metric("Source", result["source_meta"].get("detected_format", "n/a"))
-    else:
-        m2.metric("Pages", result.get("pages_processed") or 0)
+    m2.metric("Pages", result.get("pages_processed") or 0)
     m3.metric("Kind", result.get("output_kind"))
-
-    if result.get("source_meta"):
-        with st.expander("Datasource fetch / parse metadata"):
-            st.json(result["source_meta"])
 
     if result.get("schema_valid") is True:
         st.success("Schema valid")
@@ -300,10 +264,11 @@ with col_out:
             mime="text/plain",
         )
     else:
-        st.json(result.get("data"))
+        payload = result.get("classify") or result.get("data")
+        st.json(payload)
         st.download_button(
             "Download JSON",
-            data=json.dumps(result.get("data"), indent=2, ensure_ascii=False),
+            data=json.dumps(payload, indent=2, ensure_ascii=False),
             file_name="ai_node_output.json",
             mime="application/json",
         )
