@@ -118,7 +118,7 @@ with st.sidebar:
             st.success(resp.json())
         except Exception as exc:
             st.error(f"Health check failed: {exc}")
-    st.caption("Text operations use the same Qwen3-VL endpoint until a text LLM is deployed.")
+    st.caption("Text operations use the same Qwen3-VL-4B endpoint (Ollama) until a text LLM is deployed.")
     if st.button("Load example PO schema"):
         st.session_state["schema_text"] = json.dumps(DEFAULT_SCHEMA, indent=2, ensure_ascii=False)
         st.session_state["instructions_text"] = DEFAULT_INSTRUCTIONS

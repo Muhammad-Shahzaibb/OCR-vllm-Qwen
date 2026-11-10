@@ -8,22 +8,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Tunables from environment / .env.
 
-    Sized for the local vLLM deployment:
-      --max-model-len 32768
-      --max-num-seqs 8
-      --limit-mm-per-prompt '{"image": 4}'
-      --gpu-memory-utilization 0.90
+    Sized for the Ollama deployment:
+      OLLAMA_CONTEXT_LENGTH=32768
+      Model: qwen3-vl:4b-instruct
     """
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # --- LLM / VLM connection ---
-    llm_base_url: str = "http://101.44.222.84:8000/v1"
+    llm_base_url: str = "https://qwen.aigroupdev.com/v1"
     llm_api_key: str = "dummy"
-    llm_model: str = (
-        "/data/models/huggingface/hub/models--Qwen--Qwen3-VL-32B-Instruct/"
-        "snapshots/0cfaf48183f594c314753d30a4c4974bc75f3ccb"
-    )
+    llm_model: str = "qwen3-vl:4b-instruct"
 
     # --- request behaviour (aligned with vLLM) ---
     llm_request_timeout_s: float = 300.0
@@ -46,8 +41,8 @@ class Settings(BaseSettings):
 
     # --- extraction / validation / parallelism ---
     schema_validation_repair_attempts: int = 2
-    # Leave headroom under vLLM --max-num-seqs 8 for other traffic / retries.
-    max_concurrent_llm_calls: int = 6
+    # Keep concurrency moderate for a single Ollama instance.
+    max_concurrent_llm_calls: int = 4
     # After a seed batch establishes headers, remaining batches run concurrently.
     extraction_parallel_after_seed: bool = True
 
