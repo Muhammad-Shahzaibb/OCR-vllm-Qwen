@@ -7,9 +7,11 @@ python-multipart>=0.0.12
 pydantic>=2.9.0
 pydantic-settings>=2.6.0
 
-# LLM client
+# LLM clients
 openai>=1.55.0
 tenacity>=9.0.0
+google-generativeai>=0.8.0
+anthropic>=0.39.0
 
 # PDF / images / spreadsheets
 PyMuPDF>=1.24.0

@@ -1,7 +1,16 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
+import os
+import sys
+from pathlib import Path
+
+# Ensure project root is on sys.path so imports resolve consistently
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import JSONResponse
@@ -29,6 +38,7 @@ from .models import (
     NodeCatalogResponse,
 )
 from .node_catalog import get_catalog_response
+from .nodes_catalog import get_node_summary
 
 settings = get_settings()
 
@@ -39,13 +49,17 @@ logging.basicConfig(
 logger = logging.getLogger("extraction_service")
 
 app = FastAPI(
-    title="AI Node — Document / Text / Image",
+    title="Muntq Intelligence Node",
     description=(
-        "n8n-style AI node: input_type (file / text / image) routes to an operation. "
-        "Protected by X-API-Key (AI_NODE_API_KEY). "
-        "POST /extract is the legacy PDF extract path."
+        "Multi-provider AI Node service featuring:\n\n"
+        "- **Muntq Intelligence Node** (`/ai-node`, `/ai-node/catalog`)\n"
+        "- **OpenAI Node** (`/openai-node`, `/openai-node/catalog`)\n"
+        "- **Gemini AI Node** (`/gemini-node`, `/gemini-node/catalog`)\n"
+        "- **Claude AI Node** (`/claude-node`, `/claude-node/catalog`)\n"
+        "- **Master Nodes Catalog** (`/nodes/catalog`)\n\n"
+        "Protected by X-API-Key (AI_NODE_API_KEY)."
     ),
-    version="1.4.0",
+    version="2.0.0",
 )
 
 _llm_client = QwenVLClient(settings)
@@ -101,69 +115,69 @@ async def health() -> HealthResponse:
     )
 
 
-@app.post(
-    "/extract",
-    response_model=ExtractionResponse,
-    responses={
-        401: {"model": ErrorResponse},
-        413: {"model": ErrorResponse},
-        415: {"model": ErrorResponse},
-        422: {"model": ErrorResponse},
-        502: {"model": ErrorResponse},
-    },
-    dependencies=[_AUTH],
-)
-async def extract(
-    file: UploadFile = File(..., description="PDF file, English and/or Arabic"),
-    json_schema: str = Form(..., description="Target JSON Schema, as a JSON string"),
-    instructions: str = Form("", description="Free-text hints on where to find which key in the PDF"),
-) -> ExtractionResponse:
-    if file.content_type not in ("application/pdf", "application/octet-stream"):
-        raise _http_error(
-            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            "UNSUPPORTED_MEDIA_TYPE",
-            f"Unsupported content type: {file.content_type}. Expected application/pdf.",
-        )
+# @app.post(
+#     "/extract",
+#     response_model=ExtractionResponse,
+#     responses={
+#         401: {"model": ErrorResponse},
+#         413: {"model": ErrorResponse},
+#         415: {"model": ErrorResponse},
+#         422: {"model": ErrorResponse},
+#         502: {"model": ErrorResponse},
+#     },
+#     dependencies=[_AUTH],
+# )
+# async def extract(
+#     file: UploadFile = File(..., description="PDF file, English and/or Arabic"),
+#     json_schema: str = Form(..., description="Target JSON Schema, as a JSON string"),
+#     instructions: str = Form("", description="Free-text hints on where to find which key in the PDF"),
+# ) -> ExtractionResponse:
+#     if file.content_type not in ("application/pdf", "application/octet-stream"):
+#         raise _http_error(
+#             status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+#             "UNSUPPORTED_MEDIA_TYPE",
+#             f"Unsupported content type: {file.content_type}. Expected application/pdf.",
+#         )
 
-    raw_bytes = await file.read()
-    max_bytes = settings.max_upload_size_mb * 1024 * 1024
-    if len(raw_bytes) > max_bytes:
-        raise _http_error(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            "FILE_TOO_LARGE",
-            f"File exceeds {settings.max_upload_size_mb} MB limit.",
-        )
-    if not raw_bytes:
-        raise _http_error(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "EMPTY_FILE",
-            "Uploaded file is empty.",
-        )
+#     raw_bytes = await file.read()
+#     max_bytes = settings.max_upload_size_mb * 1024 * 1024
+#     if len(raw_bytes) > max_bytes:
+#         raise _http_error(
+#             status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+#             "FILE_TOO_LARGE",
+#             f"File exceeds {settings.max_upload_size_mb} MB limit.",
+#         )
+#     if not raw_bytes:
+#         raise _http_error(
+#             status.HTTP_422_UNPROCESSABLE_ENTITY,
+#             "EMPTY_FILE",
+#             "Uploaded file is empty.",
+#         )
 
-    try:
-        schema_dict = json.loads(json_schema)
-    except json.JSONDecodeError as exc:
-        raise _http_error(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "INVALID_SCHEMA_JSON",
-            f"json_schema is not valid JSON: {exc}",
-        ) from exc
+#     try:
+#         schema_dict = json.loads(json_schema)
+#     except json.JSONDecodeError as exc:
+#         raise _http_error(
+#             status.HTTP_422_UNPROCESSABLE_ENTITY,
+#             "INVALID_SCHEMA_JSON",
+#             f"json_schema is not valid JSON: {exc}",
+#         ) from exc
 
-    if not isinstance(schema_dict, dict) or not schema_dict:
-        raise _http_error(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "INVALID_SCHEMA",
-            "json_schema must be a non-empty JSON object.",
-        )
+#     if not isinstance(schema_dict, dict) or not schema_dict:
+#         raise _http_error(
+#             status.HTTP_422_UNPROCESSABLE_ENTITY,
+#             "INVALID_SCHEMA",
+#             "json_schema must be a non-empty JSON object.",
+#         )
 
-    try:
-        return await _extractor.extract(raw_bytes, schema_dict, instructions)
-    except ExtractionError as exc:
-        raise _map_domain_error(exc) from exc
+#     try:
+#         return await _extractor.extract(raw_bytes, schema_dict, instructions)
+#     except ExtractionError as exc:
+#         raise _map_domain_error(exc) from exc
 
 
 @app.get(
-    "/ai-node/catalog",
+    "/Muntq-node/catalog",
     response_model=NodeCatalogResponse,
     responses={401: {"model": ErrorResponse}},
     dependencies=[_AUTH],
@@ -173,7 +187,7 @@ async def ai_node_catalog() -> NodeCatalogResponse:
 
 
 @app.post(
-    "/ai-node",
+    "/Muntq-node",
     response_model=AiNodeResponse,
     responses={
         401: {"model": ErrorResponse},
@@ -254,6 +268,52 @@ async def run_ai_node(
         )
     except ExtractionError as exc:
         raise _map_domain_error(exc) from exc
+
+
+@app.get(
+    "/nodes/catalog",
+    tags=["Nodes Catalog"],
+    summary="Master Nodes Catalog",
+    description="Lists all available AI nodes: Muntq Intelligence Node, OpenAI Node, Gemini AI Node, Claude AI Node.",
+    dependencies=[_AUTH],
+)
+async def master_nodes_catalog() -> dict:
+    return {"nodes": get_node_summary()}
+
+
+# ---------------------------------------------------------------------------
+# Load and mount the three provider routers (Open AI, Gemini AI, Claude AI)
+# ---------------------------------------------------------------------------
+_app_dir = Path(__file__).resolve().parent
+
+
+def _load_provider_router(folder_name: str, module_alias: str):
+    router_path = _app_dir / folder_name / "router.py"
+    if not router_path.exists():
+        logger.warning("Router file not found: %s", router_path)
+        return None
+    spec = importlib.util.spec_from_file_location(module_alias, str(router_path))
+    if spec is None or spec.loader is None:
+        logger.warning("Failed to create spec for: %s", router_path)
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[module_alias] = mod
+    spec.loader.exec_module(mod)
+    return getattr(mod, "router", None)
+
+
+for _folder, _alias in [
+    ("Open AI", "openai_node_router"),
+    ("Gemini AI", "gemini_node_router"),
+    ("Claude AI", "claude_node_router"),
+]:
+    try:
+        _r = _load_provider_router(_folder, _alias)
+        if _r is not None:
+            app.include_router(_r)
+            logger.info("Mounted provider router for %s", _folder)
+    except Exception as _exc:
+        logger.error("Error mounting %s router: %s", _folder, _exc)
 
 
 @app.exception_handler(Exception)

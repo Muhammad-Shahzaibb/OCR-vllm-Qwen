@@ -226,7 +226,7 @@ with col_out:
     with st.spinner("Running AI node… vision calls can take a while."):
         try:
             response = requests.post(
-                f"{api_base_url}/ai-node",
+                f"{api_base_url}/Muntq-node",
                 data=data,
                 files=files,
                 headers=headers,
