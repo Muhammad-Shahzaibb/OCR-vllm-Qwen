@@ -1,0 +1,138 @@
+{
+  "muntqScenario": 1,
+  "exportedAt": "2026-11-19T16:30:00.000Z",
+  "name": "Inventory replenishment recommendations",
+  "credentialsRemoved": [],
+  "nodes": [
+    {
+      "key": "stock-email",
+      "nodeTypeId": "gmail.message-received",
+      "position": 0,
+      "x": 80,
+      "y": 120,
+      "credentialType": "google-oauth",
+      "name": "Watch for stock-update emails",
+      "config": {
+        "pollMode": "Every X minutes",
+        "pollMinute": "5",
+        "pollHour": "9",
+        "output": "Simplified",
+        "readStatus": "Unread emails only",
+        "hasAttachment": true,
+        "downloadAttachments": true,
+        "markAsRead": true,
+        "labels": "INBOX",
+        "maxEmails": "1",
+        "includeSpamTrash": false,
+        "filters": ["subject"],
+        "subject": "STOCK-UPDATE"
+      }
+    },
+    {
+      "key": "read-stock",
+      "nodeTypeId": "transform.read-spreadsheet",
+      "position": 1,
+      "x": 420,
+      "y": 120,
+      "name": "Read the attached Stock sheet",
+      "config": {
+        "binaryField": "attachment_1",
+        "sheetName": "Stock"
+      }
+    },
+    {
+      "key": "restock-gate",
+      "nodeTypeId": "flow-control.if",
+      "position": 2,
+      "x": 760,
+      "y": 120,
+      "name": "Is the item below its reorder point?",
+      "config": {
+        "conditions": [
+          {
+            "combinator": "AND",
+            "rules": [
+              {
+                "left": "{{node:read-stock/Reorder}}",
+                "operator": "is equal to",
+                "right": "yes"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "key": "restock-ai",
+      "nodeTypeId": "muntq.ai-operation",
+      "position": 3,
+      "x": 1100,
+      "y": 40,
+      "laneKey": "true",
+      "name": "Draft a replenishment recommendation",
+      "config": {
+        "inputType": "Text",
+        "operation": "Parse / extract",
+        "sourceText": "SKU {{node:read-stock/SKU}}, {{node:read-stock/Product}}. Current stock: {{node:read-stock/StockOnHand}}. Reorder point: {{node:read-stock/ReorderPoint}}.",
+        "schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"recommended_order_quantity\": { \"type\": \"integer\", \"minimum\": 1 },\n    \"reason\": { \"type\": \"string\" }\n  },\n  \"required\": [\"recommended_order_quantity\", \"reason\"]\n}",
+        "instruction": "Draft a replenishment suggestion only, using the stock and reorder point. Do not claim that an order was placed. Give a practical quantity and explain it briefly.",
+        "attachmentKey": "",
+        "failOnInvalidSchema": true
+      }
+    },
+    {
+      "key": "restock-draft",
+      "nodeTypeId": "transform.edit-fields",
+      "position": 4,
+      "x": 1440,
+      "y": 40,
+      "laneKey": "true",
+      "name": "Label the draft recommendation",
+      "config": {
+        "keep": "Keep all input fields",
+        "assignments": [
+          ["Replenishment Status", "Draft recommendation — not ordered"],
+          [
+            "Suggested Quantity",
+            "{{node:restock-ai/Intelligence.Result.recommended_order_quantity}}"
+          ],
+          ["Recommendation Reason", "{{node:restock-ai/Intelligence.Result.reason}}"]
+        ]
+      }
+    },
+    {
+      "key": "stock-healthy",
+      "nodeTypeId": "transform.edit-fields",
+      "position": 5,
+      "x": 1100,
+      "y": 280,
+      "laneKey": "false",
+      "name": "Mark stock as sufficient",
+      "config": {
+        "keep": "Keep all input fields",
+        "assignments": [["Replenishment Status", "No reorder required"]]
+      }
+    }
+  ],
+  "edges": [
+    { "from": "stock-email", "to": "read-stock", "kind": "MAIN", "conditions": null },
+    { "from": "read-stock", "to": "restock-gate", "kind": "MAIN", "conditions": null },
+    {
+      "from": "restock-gate",
+      "to": "restock-ai",
+      "kind": "ROUTE",
+      "routeLabel": "true",
+      "routeOrder": 0,
+      "conditions": null
+    },
+    { "from": "restock-ai", "to": "restock-draft", "kind": "MAIN", "conditions": null },
+    {
+      "from": "restock-gate",
+      "to": "stock-healthy",
+      "kind": "ROUTE",
+      "routeLabel": "false",
+      "routeOrder": 1,
+      "conditions": null
+    }
+  ]
+}

@@ -1,0 +1,143 @@
+{
+  "muntqScenario": 1,
+  "exportedAt": "2026-11-19T17:00:00.000Z",
+  "name": "Invoice email extraction and finance review",
+  "credentialsRemoved": [],
+  "nodes": [
+    {
+      "key": "invoice-inbox",
+      "nodeTypeId": "gmail.message-received",
+      "position": 0,
+      "x": 80,
+      "y": 120,
+      "credentialType": "google-oauth",
+      "name": "Watch for demo invoice emails",
+      "config": {
+        "pollMode": "Every X minutes",
+        "pollMinute": "5",
+        "pollHour": "9",
+        "output": "Simplified",
+        "readStatus": "Unread emails only",
+        "hasAttachment": true,
+        "downloadAttachments": true,
+        "markAsRead": true,
+        "labels": "INBOX",
+        "maxEmails": "1",
+        "includeSpamTrash": false,
+        "filters": ["subject"],
+        "subject": "AP-INVOICE-DEMO"
+      }
+    },
+    {
+      "key": "extract-invoice",
+      "nodeTypeId": "muntq.ai-operation",
+      "position": 1,
+      "x": 420,
+      "y": 120,
+      "name": "Extract invoice details",
+      "config": {
+        "inputType": "File",
+        "operation": "Extract",
+        "attachmentKey": "attachment_1",
+        "sourceText": "",
+        "schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"invoice_number\": { \"type\": \"string\" },\n    \"supplier\": { \"type\": \"string\" },\n    \"amount\": { \"type\": \"number\" },\n    \"currency\": { \"type\": \"string\" },\n    \"due_date\": { \"type\": \"string\" },\n    \"route\": { \"type\": \"string\", \"enum\": [\"finance review\", \"routine verification\"] }\n  },\n  \"required\": [\"invoice_number\", \"supplier\", \"amount\", \"currency\", \"due_date\", \"route\"]\n}",
+        "instruction": "Read the attached invoice and extract the requested fields. Route to finance review if a required value is missing, unclear, or the amount exceeds 5000 in the stated currency. Otherwise route to routine verification. Never approve or pay an invoice.",
+        "labels": "",
+        "style": "",
+        "failOnInvalidSchema": true
+      }
+    },
+    {
+      "key": "finance-gate",
+      "nodeTypeId": "flow-control.if",
+      "position": 2,
+      "x": 760,
+      "y": 120,
+      "name": "Does finance need to review this invoice?",
+      "config": {
+        "conditions": [
+          {
+            "combinator": "AND",
+            "rules": [
+              {
+                "left": "{{node:extract-invoice/Intelligence.Result.route}}",
+                "operator": "is equal to",
+                "right": "finance review"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "key": "finance-approval",
+      "nodeTypeId": "flow-control.wait",
+      "position": 3,
+      "x": 1100,
+      "y": 40,
+      "laneKey": "true",
+      "name": "Pause for finance decision",
+      "config": {
+        "mode": "Until resumed",
+        "notifyEmail": "reviewer@example.invalid",
+        "approvalMessage": "Review the extracted invoice fields. This demo does not approve or pay the invoice.",
+        "approvalFields": "Intelligence.Result.invoice_number, Intelligence.Result.supplier, Intelligence.Result.amount, Intelligence.Result.currency, Intelligence.Result.due_date, Intelligence.Result.route"
+      }
+    },
+    {
+      "key": "record-finance-decision",
+      "nodeTypeId": "transform.edit-fields",
+      "position": 4,
+      "x": 1440,
+      "y": 40,
+      "laneKey": "true",
+      "name": "Record finance decision",
+      "config": {
+        "keep": "Keep all input fields",
+        "assignments": [
+          ["Finance Status", "Decision recorded — verify invoice before payment"],
+          ["Finance Decision", "{{node:finance-approval/Approval.Decision}}"]
+        ]
+      }
+    },
+    {
+      "key": "routine-verification",
+      "nodeTypeId": "transform.edit-fields",
+      "position": 5,
+      "x": 1100,
+      "y": 280,
+      "laneKey": "false",
+      "name": "Mark for routine verification",
+      "config": {
+        "keep": "Keep all input fields",
+        "assignments": [["Finance Status", "Routine verification required before payment"]]
+      }
+    }
+  ],
+  "edges": [
+    { "from": "invoice-inbox", "to": "extract-invoice", "kind": "MAIN", "conditions": null },
+    { "from": "extract-invoice", "to": "finance-gate", "kind": "MAIN", "conditions": null },
+    {
+      "from": "finance-gate",
+      "to": "finance-approval",
+      "kind": "ROUTE",
+      "routeLabel": "true",
+      "routeOrder": 0,
+      "conditions": null
+    },
+    {
+      "from": "finance-approval",
+      "to": "record-finance-decision",
+      "kind": "MAIN",
+      "conditions": null
+    },
+    {
+      "from": "finance-gate",
+      "to": "routine-verification",
+      "kind": "ROUTE",
+      "routeLabel": "false",
+      "routeOrder": 1,
+      "conditions": null
+    }
+  ]
+}

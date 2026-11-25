@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import httpx
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 from tenacity import (
     AsyncRetrying,
@@ -41,11 +42,17 @@ class QwenVLClient:
 
     def __init__(self, settings: Settings):
         self._settings = settings
+        http_client = (
+            httpx.AsyncClient(verify=False)
+            if not getattr(settings, "llm_verify_ssl", True)
+            else None
+        )
         self._client = AsyncOpenAI(
             base_url=settings.llm_base_url,
             api_key=settings.llm_api_key,
             timeout=settings.llm_request_timeout_s,
             max_retries=0,  # we own retry/backoff below so we can log + fall back
+            http_client=http_client,
         )
 
     async def extract_json(
@@ -54,6 +61,9 @@ class QwenVLClient:
         user_content: list[dict[str, Any]],
         json_schema: dict[str, Any],
         request_id: str,
+        *,
+        max_tokens: int | None = None,
+        max_retries: int | None = None,
     ) -> str:
         """Calls the model constrained to `json_schema` via vLLM's guided decoding.
 
@@ -64,7 +74,13 @@ class QwenVLClient:
         """
         try:
             return await self._call_with_retry(
-                system_prompt, user_content, json_schema, request_id, use_guided_json=True
+                system_prompt,
+                user_content,
+                json_schema,
+                request_id,
+                use_guided_json=True,
+                max_tokens=max_tokens,
+                max_retries=max_retries,
             )
         except APIStatusError as exc:
             if exc.status_code == 400 and _looks_like_guided_json_rejection(exc):
@@ -76,7 +92,13 @@ class QwenVLClient:
                 )
                 try:
                     return await self._call_with_retry(
-                        system_prompt, user_content, json_schema, request_id, use_guided_json=False
+                        system_prompt,
+                        user_content,
+                        json_schema,
+                        request_id,
+                        use_guided_json=False,
+                        max_tokens=max_tokens,
+                        max_retries=max_retries,
                     )
                 except APIStatusError as retry_exc:
                     raise LLMCallError(
@@ -92,14 +114,18 @@ class QwenVLClient:
         user_content: list[dict[str, Any]],
         json_schema: dict[str, Any],
         request_id: str,
+        *,
         use_guided_json: bool,
+        max_tokens: int | None = None,
+        max_retries: int | None = None,
     ) -> str:
         extra_body: dict[str, Any] = {"guided_json": json_schema} if use_guided_json else {}
         response = None
+        attempts = self._settings.llm_max_retries if max_retries is None else max_retries
 
         async for attempt in AsyncRetrying(
             reraise=True,
-            stop=stop_after_attempt(self._settings.llm_max_retries),
+            stop=stop_after_attempt(attempts),
             wait=wait_exponential(
                 multiplier=1,
                 min=self._settings.llm_retry_min_wait_s,
@@ -116,7 +142,7 @@ class QwenVLClient:
                         {"role": "user", "content": user_content},
                     ],
                     temperature=self._settings.llm_temperature,
-                    max_tokens=self._effective_max_tokens(),
+                    max_tokens=self._effective_max_tokens(max_tokens),
                     extra_body=extra_body,
                     extra_headers={"X-Request-ID": request_id},
                 )
@@ -134,10 +160,13 @@ class QwenVLClient:
         request_id: str,
         *,
         temperature: float | None = None,
+        max_tokens: int | None = None,
+        max_retries: int | None = None,
     ) -> str:
         """Unconstrained generation (classify/summarize/rewrite/OCR/analyze)."""
         extra_body: dict[str, Any] = {}
         temp = self._settings.llm_temperature if temperature is None else temperature
+        attempts = self._settings.llm_max_retries if max_retries is None else max_retries
         content = (
             user_content
             if isinstance(user_content, list)
@@ -147,7 +176,7 @@ class QwenVLClient:
         try:
             async for attempt in AsyncRetrying(
                 reraise=True,
-                stop=stop_after_attempt(self._settings.llm_max_retries),
+                stop=stop_after_attempt(attempts),
                 wait=wait_exponential(
                     multiplier=1,
                     min=self._settings.llm_retry_min_wait_s,
@@ -164,7 +193,7 @@ class QwenVLClient:
                             {"role": "user", "content": content},
                         ],
                         temperature=temp,
-                        max_tokens=self._effective_max_tokens(),
+                        max_tokens=self._effective_max_tokens(max_tokens),
                         extra_body=extra_body,
                         extra_headers={"X-Request-ID": request_id},
                     )
@@ -179,9 +208,12 @@ class QwenVLClient:
             raise LLMCallError("VLM returned an empty response.")
         return text
 
-    def _effective_max_tokens(self) -> int:
+    def _effective_max_tokens(self, override: int | None = None) -> int:
         """Cap output tokens so input (text + up to 4 images) still fits in max-model-len."""
         # Reserve a conservative budget for images + prompt; remainder is generation.
         reserve = 12_000
         budget = max(1024, self._settings.llm_max_model_len - reserve)
-        return min(self._settings.llm_max_output_tokens, budget)
+        cap = min(self._settings.llm_max_output_tokens, budget)
+        if override:
+            cap = min(cap, int(override))
+        return cap

@@ -1,0 +1,210 @@
+{
+  "muntqScenario": 1,
+  "exportedAt": "2026-11-20T09:50:59.336Z",
+  "name": "Vendor onboarding intake and review old",
+  "nodes": [
+    {
+      "key": "onboarding",
+      "nodeTypeId": "form.on-submit",
+      "position": 0,
+      "x": null,
+      "y": null,
+      "laneKey": "main",
+      "note": null,
+      "name": "New vendor application",
+      "config": {
+        "path": "vendor-onboarding-demo-old",
+        "intro": "Share your company details. Our team will review the application before onboarding.",
+        "title": "New vendor application",
+        "fields": [
+          {
+            "type": "Short text",
+            "label": "Company",
+            "options": [],
+            "required": true
+          },
+          {
+            "type": "Short text",
+            "label": "ContactName",
+            "options": [],
+            "required": true
+          },
+          {
+            "type": "Email",
+            "label": "BusinessEmail",
+            "options": [],
+            "required": true
+          },
+          {
+            "type": "Short text",
+            "label": "CompanyWebsite",
+            "options": [],
+            "required": false
+          },
+          {
+            "type": "Long text",
+            "label": "ServicesOffered",
+            "options": [],
+            "required": true
+          }
+        ],
+        "message": "Thanks. Your application has been received for review.",
+        "afterSubmit": "Show a message",
+        "buttonLabel": "Submit application"
+      },
+      "credentialType": null
+    },
+    {
+      "key": "classify",
+      "nodeTypeId": "muntq.ai-operation",
+      "position": 1,
+      "x": null,
+      "y": null,
+      "laneKey": "main",
+      "note": null,
+      "name": "Categorize the vendor",
+      "config": {
+        "schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"category\": { \"type\": \"string\" },\n    \"manual_review\": { \"type\": \"boolean\" },\n    \"review_reason\": { \"type\": \"string\" }\n  },\n  \"required\": [\"category\", \"manual_review\", \"review_reason\"]\n}",
+        "inputType": "Text",
+        "operation": "Parse / extract",
+        "sourceText": "Company: {{node:onboarding/Form.Company}}. Website: {{node:onboarding/Form.CompanyWebsite}}. Services: {{node:onboarding/Form.ServicesOffered}}",
+        "instruction": "Classify the supplier's main service category using only the submitted information. Set manual_review to true when the description is unclear, the website is missing, or the business activity needs a human verification. Do not claim that a vendor is approved.",
+        "attachmentKey": "",
+        "failOnInvalidSchema": true
+      },
+      "credentialType": null
+    },
+    {
+      "key": "prepare-record",
+      "nodeTypeId": "transform.edit-fields",
+      "position": 2,
+      "x": null,
+      "y": null,
+      "laneKey": "main",
+      "note": null,
+      "name": "Prepare a review record",
+      "config": {
+        "keep": "Keep only the fields set here",
+        "assignments": [
+          [
+            "Company",
+            "{{node:onboarding/Form.Company}}"
+          ],
+          [
+            "Contact",
+            "{{node:onboarding/Form.ContactName}}"
+          ],
+          [
+            "Email",
+            "{{node:onboarding/Form.BusinessEmail}}"
+          ],
+          [
+            "Website",
+            "{{node:onboarding/Form.CompanyWebsite}}"
+          ],
+          [
+            "Services",
+            "{{node:onboarding/Form.ServicesOffered}}"
+          ],
+          [
+            "Category",
+            "{{node:classify/Intelligence.Result.category}}"
+          ],
+          [
+            "Manual Review",
+            "{{node:classify/Intelligence.Result.manual_review}}"
+          ],
+          [
+            "Review Reason",
+            "{{node:classify/Intelligence.Result.review_reason}}"
+          ],
+          [
+            "Status",
+            "Pending human verification"
+          ]
+        ]
+      },
+      "credentialType": null
+    },
+    {
+      "key": "export-review-queue",
+      "nodeTypeId": "transform.convert-to-file",
+      "position": 3,
+      "x": null,
+      "y": null,
+      "laneKey": "main",
+      "note": null,
+      "name": "Create onboarding review CSV",
+      "config": {
+        "fileName": "vendor-review-queue",
+        "operation": "Convert to CSV",
+        "outputField": "data"
+      },
+      "credentialType": null
+    },
+    {
+      "key": "gmail-send-message-on4cym",
+      "nodeTypeId": "gmail.send-message",
+      "position": 4,
+      "x": null,
+      "y": null,
+      "laneKey": "main",
+      "note": null,
+      "name": null,
+      "config": {
+        "cc": "",
+        "to": "saad.hussain@qbsco.net",
+        "bcc": "",
+        "message": "Vendor onboarding intake and review II\n{{node:export-review-queue/File}}",
+        "onError": "Stop scenario",
+        "options": [
+          "attachmentFields"
+        ],
+        "replyTo": "",
+        "subject": "Vendor onboarding intake and review",
+        "emailType": "Text",
+        "tableFrom": "",
+        "senderName": "",
+        "simplifyJson": false,
+        "tableColumns": "",
+        "attachmentFields": "data"
+      },
+      "credentialType": "google-oauth"
+    }
+  ],
+  "edges": [
+    {
+      "from": "onboarding",
+      "to": "classify",
+      "kind": "MAIN",
+      "routeLabel": null,
+      "routeOrder": null,
+      "conditions": null
+    },
+    {
+      "from": "classify",
+      "to": "prepare-record",
+      "kind": "MAIN",
+      "routeLabel": null,
+      "routeOrder": null,
+      "conditions": null
+    },
+    {
+      "from": "prepare-record",
+      "to": "export-review-queue",
+      "kind": "MAIN",
+      "routeLabel": null,
+      "routeOrder": null,
+      "conditions": null
+    },
+    {
+      "from": "export-review-queue",
+      "to": "gmail-send-message-on4cym",
+      "kind": "MAIN",
+      "routeLabel": null,
+      "routeOrder": null,
+      "conditions": null
+    }
+  ],
+  "credentialsRemoved": []
+}

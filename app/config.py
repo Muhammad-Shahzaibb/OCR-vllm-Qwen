@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://qwen.aigroupdev.com/v1"
     llm_api_key: str = "dummy"
     llm_model: str = "qwen3-vl:4b-instruct"
+    llm_verify_ssl: bool = True
 
     # --- request behaviour (aligned with vLLM) ---
     llm_request_timeout_s: float = 300.0

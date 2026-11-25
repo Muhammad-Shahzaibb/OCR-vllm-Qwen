@@ -1,0 +1,133 @@
+{
+  "muntqScenario": 1,
+  "exportedAt": "2026-11-19T16:30:00.000Z",
+  "name": "Expense claim review and approval",
+  "credentialsRemoved": [],
+  "nodes": [
+    {
+      "key": "expense-form",
+      "nodeTypeId": "form.on-submit",
+      "position": 0,
+      "x": 80,
+      "y": 120,
+      "name": "Submit an expense claim",
+      "config": {
+        "title": "Employee expense claim",
+        "path": "expense-claim-demo",
+        "intro": "Submit a business expense. Claims flagged for review will pause for a manager decision.",
+        "buttonLabel": "Submit claim",
+        "afterSubmit": "Show a message",
+        "message": "Your claim has been received. Keep your receipt until finance completes its checks.",
+        "fields": [
+          { "label": "Employee", "type": "Short text", "required": true, "options": [] },
+          { "label": "WorkEmail", "type": "Email", "required": true, "options": [] },
+          { "label": "Amount", "type": "Number", "required": true, "options": [] },
+          { "label": "Merchant", "type": "Short text", "required": true, "options": [] },
+          { "label": "BusinessPurpose", "type": "Long text", "required": true, "options": [] }
+        ]
+      }
+    },
+    {
+      "key": "policy-check",
+      "nodeTypeId": "code.run-code",
+      "position": 1,
+      "x": 420,
+      "y": 120,
+      "name": "Apply the demo review policy",
+      "config": {
+        "mode": "Run Once for Each Item",
+        "language": "JavaScript",
+        "jsCode": "const amount = Number($json.Form.Amount);\nconst purpose = String($json.Form.BusinessPurpose || '').trim();\nconst needsReview = amount > 250 || purpose.length < 20;\nconst reason = amount > 250\n  ? 'Amount exceeds the demo threshold of 250 USD.'\n  : purpose.length < 20\n    ? 'Business purpose needs more detail.'\n    : 'Claim is within the demo routing checks.';\nreturn [{\n  json: {\n    ...$json,\n    ReviewRoute: needsReview ? 'manager review' : 'routine queue',\n    ReviewReason: reason\n  }\n}];"
+      }
+    },
+    {
+      "key": "review-gate",
+      "nodeTypeId": "flow-control.if",
+      "position": 2,
+      "x": 760,
+      "y": 120,
+      "name": "Does this claim need a manager?",
+      "config": {
+        "conditions": [
+          {
+            "combinator": "AND",
+            "rules": [
+              {
+                "left": "{{node:policy-check/ReviewRoute}}",
+                "operator": "is equal to",
+                "right": "manager review"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "key": "manager-approval",
+      "nodeTypeId": "flow-control.wait",
+      "position": 3,
+      "x": 1100,
+      "y": 40,
+      "laneKey": "true",
+      "name": "Manager decides on the claim",
+      "config": {
+        "mode": "Until resumed",
+        "notifyEmail": "reviewer@example.invalid",
+        "approvalMessage": "Review this expense claim and the MUNTQ Intelligence recommendation. This demo does not issue a reimbursement.",
+        "approvalFields": "Form.Employee, Form.WorkEmail, Form.Amount, Form.Merchant, Form.BusinessPurpose, ReviewReason"
+      }
+    },
+    {
+      "key": "record-decision",
+      "nodeTypeId": "transform.edit-fields",
+      "position": 4,
+      "x": 1440,
+      "y": 40,
+      "laneKey": "true",
+      "name": "Record manager decision",
+      "config": {
+        "keep": "Keep all input fields",
+        "assignments": [
+          ["Review Status", "Manager decision recorded; verify receipt before reimbursement"],
+          ["Manager Decision", "{{node:manager-approval/Approval.Decision}}"]
+        ]
+      }
+    },
+    {
+      "key": "routine-queue",
+      "nodeTypeId": "transform.edit-fields",
+      "position": 5,
+      "x": 1100,
+      "y": 280,
+      "laneKey": "false",
+      "name": "Mark for routine finance checks",
+      "config": {
+        "keep": "Keep all input fields",
+        "assignments": [
+          ["Review Status", "Routine queue — verify receipt and policy before reimbursement"]
+        ]
+      }
+    }
+  ],
+  "edges": [
+    { "from": "expense-form", "to": "policy-check", "kind": "MAIN", "conditions": null },
+    { "from": "policy-check", "to": "review-gate", "kind": "MAIN", "conditions": null },
+    {
+      "from": "review-gate",
+      "to": "manager-approval",
+      "kind": "ROUTE",
+      "routeLabel": "true",
+      "routeOrder": 0,
+      "conditions": null
+    },
+    { "from": "manager-approval", "to": "record-decision", "kind": "MAIN", "conditions": null },
+    {
+      "from": "review-gate",
+      "to": "routine-queue",
+      "kind": "ROUTE",
+      "routeLabel": "false",
+      "routeOrder": 1,
+      "conditions": null
+    }
+  ]
+}

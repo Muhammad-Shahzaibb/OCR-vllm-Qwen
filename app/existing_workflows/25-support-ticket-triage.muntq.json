@@ -1,0 +1,124 @@
+{
+  "muntqScenario": 1,
+  "exportedAt": "2026-11-19T17:00:00.000Z",
+  "name": "Customer support request triage",
+  "credentialsRemoved": [],
+  "nodes": [
+    {
+      "key": "support-form",
+      "nodeTypeId": "form.on-submit",
+      "position": 0,
+      "x": 80,
+      "y": 120,
+      "name": "Customer support request",
+      "config": {
+        "title": "Contact customer support",
+        "path": "support-request-demo",
+        "intro": "Describe the issue. This demo prepares a queue and reply draft; it does not send an email.",
+        "buttonLabel": "Submit request",
+        "afterSubmit": "Show a message",
+        "message": "Your request has been received for review.",
+        "fields": [
+          { "label": "Customer", "type": "Short text", "required": true, "options": [] },
+          { "label": "Email", "type": "Email", "required": true, "options": [] },
+          { "label": "Subject", "type": "Short text", "required": true, "options": [] },
+          { "label": "OrderNumber", "type": "Short text", "required": false, "options": [] },
+          { "label": "Message", "type": "Long text", "required": true, "options": [] }
+        ]
+      }
+    },
+    {
+      "key": "triage",
+      "nodeTypeId": "muntq.ai-operation",
+      "position": 1,
+      "x": 420,
+      "y": 120,
+      "name": "Summarize and draft a response",
+      "config": {
+        "inputType": "Text",
+        "operation": "Parse / extract",
+        "sourceText": "Customer: {{node:support-form/Form.Customer}}. Subject: {{node:support-form/Form.Subject}}. Order: {{node:support-form/Form.OrderNumber}}. Message: {{node:support-form/Form.Message}}",
+        "schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"priority\": { \"type\": \"string\", \"enum\": [\"urgent\", \"normal\"] },\n    \"category\": { \"type\": \"string\" },\n    \"summary\": { \"type\": \"string\" },\n    \"draft_reply\": { \"type\": \"string\" }\n  },\n  \"required\": [\"priority\", \"category\", \"summary\", \"draft_reply\"]\n}",
+        "instruction": "Classify the request as urgent only when it describes an active service outage, safety concern, or a time-critical inability to use a paid service. Otherwise use normal. Summarize the issue and draft a polite reply. Do not promise refunds, policy exceptions, or actions that were not confirmed.",
+        "attachmentKey": "",
+        "failOnInvalidSchema": true
+      }
+    },
+    {
+      "key": "priority-gate",
+      "nodeTypeId": "flow-control.if",
+      "position": 2,
+      "x": 760,
+      "y": 120,
+      "name": "Is this request urgent?",
+      "config": {
+        "conditions": [
+          {
+            "combinator": "AND",
+            "rules": [
+              {
+                "left": "{{node:triage/Intelligence.Result.priority}}",
+                "operator": "is equal to",
+                "right": "urgent"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "key": "urgent-queue",
+      "nodeTypeId": "transform.edit-fields",
+      "position": 3,
+      "x": 1100,
+      "y": 40,
+      "laneKey": "true",
+      "name": "Mark for urgent agent response",
+      "config": {
+        "keep": "Keep all input fields",
+        "assignments": [
+          ["Support Queue", "Urgent — agent response needed"],
+          ["Issue Summary", "{{node:triage/Intelligence.Result.summary}}"],
+          ["Reply Draft", "{{node:triage/Intelligence.Result.draft_reply}}"]
+        ]
+      }
+    },
+    {
+      "key": "standard-queue",
+      "nodeTypeId": "transform.edit-fields",
+      "position": 4,
+      "x": 1100,
+      "y": 280,
+      "laneKey": "false",
+      "name": "Mark for standard support queue",
+      "config": {
+        "keep": "Keep all input fields",
+        "assignments": [
+          ["Support Queue", "Standard agent queue"],
+          ["Issue Summary", "{{node:triage/Intelligence.Result.summary}}"],
+          ["Reply Draft", "{{node:triage/Intelligence.Result.draft_reply}}"]
+        ]
+      }
+    }
+  ],
+  "edges": [
+    { "from": "support-form", "to": "triage", "kind": "MAIN", "conditions": null },
+    { "from": "triage", "to": "priority-gate", "kind": "MAIN", "conditions": null },
+    {
+      "from": "priority-gate",
+      "to": "urgent-queue",
+      "kind": "ROUTE",
+      "routeLabel": "true",
+      "routeOrder": 0,
+      "conditions": null
+    },
+    {
+      "from": "priority-gate",
+      "to": "standard-queue",
+      "kind": "ROUTE",
+      "routeLabel": "false",
+      "routeOrder": 1,
+      "conditions": null
+    }
+  ]
+}

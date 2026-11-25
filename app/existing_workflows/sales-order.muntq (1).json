@@ -1,0 +1,303 @@
+{
+  "muntqScenario": 1,
+  "exportedAt": "2026-11-17T08:28:59.311Z",
+  "name": "Sales Order",
+  "nodes": [
+    {
+      "key": "outlook-message-received-0yj9f6",
+      "nodeTypeId": "outlook.message-received",
+      "position": 0,
+      "x": 0,
+      "y": 0,
+      "laneKey": "main",
+      "note": null,
+      "name": "New purchase order email",
+      "config": {
+        "cron": "0 */2 * * *",
+        "folder": "Inbox",
+        "output": "Simplified",
+        "search": "",
+        "sender": "saadhussain.katira1234@gmail.com",
+        "onError": "Stop scenario",
+        "subject": "Sales Order SO",
+        "pollHour": "9",
+        "pollMode": "Every Hour",
+        "maxEmails": "10",
+        "rawFilter": "",
+        "triggerOn": "Message Received",
+        "markAsRead": true,
+        "pollMinute": "0",
+        "readStatus": "Unread emails only",
+        "pollWeekday": "Monday",
+        "outputFields": "id,subject,from,receivedDateTime",
+        "hasAttachment": true,
+        "receivedAfter": "",
+        "pollDayOfMonth": "1",
+        "attachmentTypes": "application/pdf",
+        "maxAttachmentMb": "",
+        "downloadAttachments": true,
+        "includeAttachmentNames": false
+      },
+      "credentialType": "microsoft-oauth"
+    },
+    {
+      "key": "read",
+      "nodeTypeId": "muntq.file-extract",
+      "position": 1,
+      "x": 344,
+      "y": 0,
+      "laneKey": "main",
+      "note": null,
+      "name": "Read the purchase order",
+      "config": {
+        "schema": "{\n  \"type\": \"array\",\n  \"items\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"poRef\": {\n        \"type\": \"string\"\n      },\n      \"suppName\": {\n        \"type\": \"string\"\n      },\n      \"location\": {\n        \"type\": \"string\"\n      },\n      \"material\": {\n        \"type\": \"string\"\n      },\n      \"dept\": {\n        \"type\": \"string\"\n      },\n      \"uom\": {\n        \"type\": \"string\"\n      },\n      \"qty\": {\n        \"type\": \"string\"\n      },\n      \"comments\": {\n        \"type\": \"string\"\n      }\n    },\n    \"required\": [\n      \"poRef\",\n      \"suppName\",\n      \"location\",\n      \"material\",\n      \"dept\",\n      \"uom\",\n      \"qty\",\n      \"comments\"\n    ],\n    \"additionalProperties\": false\n  }\n}\n",
+        "instruction": "\nExtract every PO line item from the PDF.\n\n- poRef: Purchase Order # from the header.\n- suppName: Supplier Name from the header.\n- location: Location from the corresponding header section. If multiple location sections exist, use the location belonging to that line item.\n- material: Material code from Item Description, extracted as the value before \"--\". Do not use Item #.\n- dept: Dept from the line-item row.\n- uom: UOM from the line-item row.\n- qty: Qty from the line-item row.\n- comments: Comments from the corresponding PO header.\n\nRepeat the header values for every line item under that header.\nDo not omit, merge, duplicate, or invent line items.\nReturn valid JSON only, matching the schema below.",
+        "attachmentKey": "",
+        "failOnInvalidSchema": false
+      },
+      "credentialType": null
+    },
+    {
+      "key": "read-ok",
+      "nodeTypeId": "flow-control.if",
+      "position": 2,
+      "x": 712,
+      "y": 7,
+      "laneKey": "main",
+      "note": null,
+      "name": "Order read cleanly?",
+      "config": {
+        "conditions": [
+          {
+            "rules": [
+              {
+                "left": "{{node:read/Intelligence.SchemaValid}}",
+                "right": "true",
+                "operator": "is equal to"
+              }
+            ],
+            "combinator": "AND"
+          }
+        ]
+      },
+      "credentialType": null
+    },
+    {
+      "key": "muntq-text-parse-9k3ppw",
+      "nodeTypeId": "muntq.text-parse",
+      "position": 3,
+      "x": null,
+      "y": null,
+      "laneKey": "main",
+      "note": null,
+      "name": null,
+      "config": {
+        "schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"invoice_no\": { \"type\": \"string\" },\n    \"total\": { \"type\": \"number\" },\n    \"currency\": { \"type\": \"string\" }\n  },\n  \"required\": [\"invoice_no\", \"total\"]\n}",
+        "onError": "Stop scenario",
+        "sourceText": "",
+        "instruction": "Extract the invoice number, the total and the currency. Use null when a value is not present.",
+        "failOnInvalidSchema": true
+      },
+      "credentialType": null
+    },
+    {
+      "key": "muntq-file-classify-g4xfeg",
+      "nodeTypeId": "muntq.file-classify",
+      "position": 4,
+      "x": null,
+      "y": null,
+      "laneKey": "main",
+      "note": null,
+      "name": null,
+      "config": {
+        "labels": "invoice, purchase_order, sales_order, proforma_invoice, receipt, identity_document, contract, letter, other",
+        "onError": "Stop scenario",
+        "attachmentKey": ""
+      },
+      "credentialType": null
+    },
+    {
+      "key": "unreadable",
+      "nodeTypeId": "outlook.reply-email",
+      "position": 0,
+      "x": 1078,
+      "y": 219,
+      "laneKey": "false",
+      "note": null,
+      "name": "Say the order could not be read",
+      "config": {
+        "body": "Thanks for your order. We could not read the attached document automatically, so a person will process it today.",
+        "options": [
+          "messageId"
+        ],
+        "messageId": "{{node:outlook-message-received-0yj9f6/Message.Id}}",
+        "replyToSenderOnly": true
+      },
+      "credentialType": "microsoft-oauth"
+    },
+    {
+      "key": "group",
+      "nodeTypeId": "code.run-code",
+      "position": 0,
+      "x": 1032,
+      "y": 0,
+      "laneKey": "true",
+      "note": null,
+      "name": "Group by location (SO-1, SO-2…)",
+      "config": {
+        "mode": "Run Once for Each Item",
+        "jsCode": "// One sales order per PO + supplier + location: SO-1, SO-2, … in the order they appear.\nconst lines = $json.Intelligence?.Json ?? [];\nconst numbers = new Map();\n\nconst rows = lines.map((line) => {\n  const key = [line.poRef, line.suppName, line.location].join('|');\n  if (!numbers.has(key)) numbers.set(key, `SO-${numbers.size + 1}`);\n  return { saleNo: numbers.get(key), ...line };\n});\n\n// One item holding every line, so SAP receives the whole batch in one call.\nreturn [{ json: { Rows: rows, SalesOrders: numbers.size } }];\n",
+        "language": "JavaScript"
+      },
+      "credentialType": null
+    },
+    {
+      "key": "create",
+      "nodeTypeId": "sap.create-record",
+      "position": 1,
+      "x": 1376,
+      "y": 0,
+      "laneKey": "true",
+      "note": null,
+      "name": "Post to SAP (ZMULTI_SO_API)",
+      "config": {
+        "record": "{{node:group/Rows}}",
+        "headers": [],
+        "options": [],
+        "queryRows": [],
+        "servicePath": "/sap/bc/ZMULTI_SO_API"
+      },
+      "credentialType": "sap"
+    },
+    {
+      "key": "report",
+      "nodeTypeId": "transform.convert-to-file",
+      "position": 2,
+      "x": 1720,
+      "y": 0,
+      "laneKey": "true",
+      "note": null,
+      "name": "Build result report",
+      "config": {
+        "addBom": true,
+        "columns": [
+          [
+            "PO reference",
+            "poReference"
+          ],
+          [
+            "Supplier",
+            "suppName"
+          ],
+          [
+            "Location",
+            "location"
+          ],
+          [
+            "Sales order",
+            "salesOrder"
+          ],
+          [
+            "Result",
+            "result"
+          ]
+        ],
+        "options": [
+          "addBom"
+        ],
+        "fileName": "SO-result",
+        "operation": "Convert to CSV",
+        "outputField": "data"
+      },
+      "credentialType": null
+    },
+    {
+      "key": "reply",
+      "nodeTypeId": "outlook.reply-email",
+      "position": 3,
+      "x": 2074,
+      "y": 10,
+      "laneKey": "true",
+      "note": null,
+      "name": "Reply with report",
+      "config": {
+        "body": "Your Sales Order was processed. {{node:report/File.Rows}} sales order(s) posted to SAP — the attached report shows the result for each one.",
+        "options": [
+          "messageId",
+          "attachmentFields"
+        ],
+        "messageId": "{{node:outlook-message-received-0yj9f6/Message.Id}}",
+        "attachmentFields": "data",
+        "replyToSenderOnly": true
+      },
+      "credentialType": "microsoft-oauth"
+    }
+  ],
+  "edges": [
+    {
+      "from": "outlook-message-received-0yj9f6",
+      "to": "read",
+      "kind": "MAIN",
+      "routeLabel": null,
+      "routeOrder": null,
+      "conditions": null
+    },
+    {
+      "from": "read",
+      "to": "read-ok",
+      "kind": "MAIN",
+      "routeLabel": null,
+      "routeOrder": null,
+      "conditions": null
+    },
+    {
+      "from": "read-ok",
+      "to": "group",
+      "kind": "ROUTE",
+      "routeLabel": "true",
+      "routeOrder": 0,
+      "conditions": null
+    },
+    {
+      "from": "read-ok",
+      "to": "unreadable",
+      "kind": "ROUTE",
+      "routeLabel": "false",
+      "routeOrder": 1,
+      "conditions": null
+    },
+    {
+      "from": "group",
+      "to": "create",
+      "kind": "MAIN",
+      "routeLabel": null,
+      "routeOrder": null,
+      "conditions": null
+    },
+    {
+      "from": "create",
+      "to": "report",
+      "kind": "MAIN",
+      "routeLabel": null,
+      "routeOrder": null,
+      "conditions": null
+    },
+    {
+      "from": "report",
+      "to": "reply",
+      "kind": "MAIN",
+      "routeLabel": null,
+      "routeOrder": null,
+      "conditions": null
+    },
+    {
+      "from": "muntq-text-parse-9k3ppw",
+      "to": "muntq-file-classify-g4xfeg",
+      "kind": "MAIN",
+      "routeLabel": null,
+      "routeOrder": null,
+      "conditions": null
+    }
+  ],
+  "credentialsRemoved": []
+}

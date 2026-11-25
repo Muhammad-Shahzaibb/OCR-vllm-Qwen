@@ -316,6 +316,18 @@ for _folder, _alias in [
         logger.error("Error mounting %s router: %s", _folder, _exc)
 
 
+# ---------------------------------------------------------------------------
+# Workflow generation (natural language -> Muntq workflow JSON)
+# ---------------------------------------------------------------------------
+try:
+    from .Workflow_generation.router import router as _workflow_router
+
+    app.include_router(_workflow_router)
+    logger.info("Mounted workflow generation router")
+except Exception as _exc:  # noqa: BLE001 — feature must never break the service
+    logger.error("Error mounting workflow generation router: %s", _exc)
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.exception("unhandled exception")
